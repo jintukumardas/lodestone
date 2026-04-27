@@ -1,0 +1,46 @@
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: kg-nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client
+      - "8222:8222"   # http monitoring
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.10
+    container_name: kg-clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      CLICKHOUSE_DB: kg
+      CLICKHOUSE_USER: kg
+      CLICKHOUSE_PASSWORD: kg
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # native TCP
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/migrations:/docker-entrypoint-initdb.d:ro
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  nats-data:
+  clickhouse-data:

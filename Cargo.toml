@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kg-core",
+    "crates/indexer",
+    "crates/sdlc-emitter",
+    "crates/api",
+    "crates/mcp-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Errors / logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Time / IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hashing for stable IDs
+blake3 = "1"
+hex = "0.4"
+
+# Messaging
+async-nats = "0.38"
+
+# ClickHouse
+clickhouse = { version = "0.13", features = ["uuid", "chrono"] }
+
+# HTTP API
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+reqwest = { version = "0.12", features = ["json"], default-features = false }
+
+# Filesystem walking
+walkdir = "2"
+ignore = "0.4"
+notify = "7"
+
+# Tree-sitter
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+
+# MCP
+rmcp = { version = "0.2", features = ["server", "macros", "transport-io"] }
+schemars = "0.8"
+
+# Internal
+kg-core = { path = "crates/kg-core" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
