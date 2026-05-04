@@ -1,0 +1,42 @@
+[
+  {
+    "type": "issue",
+    "id": "ISS-1",
+    "title": "Indexer drops files with non-UTF-8 paths",
+    "author": "alice",
+    "state": "open",
+    "repo": "knowledge-graph",
+    "ts": "2026-05-01T10:00:00Z"
+  },
+  {
+    "type": "issue",
+    "id": "ISS-2",
+    "title": "Add support for cross-file call resolution",
+    "author": "bob",
+    "state": "open",
+    "repo": "knowledge-graph",
+    "ts": "2026-05-02T09:30:00Z"
+  },
+  {
+    "type": "mr",
+    "id": "MR-101",
+    "title": "Make file walk skip non-UTF-8 paths gracefully",
+    "author": "alice",
+    "state": "merged",
+    "repo": "knowledge-graph",
+    "touches": ["crates/indexer/src/walk.rs", "crates/indexer/src/parse.rs"],
+    "closes": ["ISS-1"],
+    "ts": "2026-05-05T14:20:00Z"
+  },
+  {
+    "type": "mr",
+    "id": "MR-102",
+    "title": "WIP: scope resolution for call_expression",
+    "author": "bob",
+    "state": "open",
+    "repo": "knowledge-graph",
+    "touches": ["crates/indexer/src/parse.rs"],
+    "closes": [],
+    "ts": "2026-05-08T11:05:00Z"
+  }
+]
