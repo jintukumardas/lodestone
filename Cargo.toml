@@ -12,6 +12,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+authors = ["Jintu Kumar Das"]
 publish = false
 
 [workspace.dependencies]
