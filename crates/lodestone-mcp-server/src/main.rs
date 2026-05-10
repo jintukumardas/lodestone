@@ -1,4 +1,4 @@
-//! MCP server that wraps the knowledge graph HTTP API.
+//! MCP server that wraps the Lodestone graph HTTP API.
 //!
 //! Exposes three tools to MCP clients (Claude Desktop, mcp-inspector, etc.):
 //!   - `get_function_callers` — given a repo + function name, list callers
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use kg_core::ids::node_id;
+use lodestone_core::ids::node_id;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::Parameters},
     model::{CallToolResult, Content, ServerInfo},
@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Parser, Debug)]
 #[command(name = "mcp-server")]
 struct Args {
-    /// Base URL of the knowledge graph HTTP API.
-    #[arg(long, default_value = "http://127.0.0.1:7700", env = "KG_API_URL")]
+    /// Base URL of the Lodestone graph HTTP API.
+    #[arg(long, default_value = "http://127.0.0.1:7700", env = "LODESTONE_API_URL")]
     api_url: String,
 }
 
@@ -41,7 +41,7 @@ struct KgServer {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct CallersArgs {
-    /// Repo name (e.g. "knowledge-graph").
+    /// Repo name (e.g. "lodestone").
     repo: String,
     /// File path of the function, relative to the repo root.
     file_path: String,
@@ -59,7 +59,7 @@ struct ImpactedArgs {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct SubgraphArgs {
-    /// Node id (32-char hex hash from kg_core::ids).
+    /// Node id (32-char hex hash from lodestone_core::ids).
     node_id: String,
     /// Hops to expand from the seed. Default 2.
     #[serde(default = "default_depth")]

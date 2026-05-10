@@ -1,5 +1,5 @@
 [package]
-name = "kg-core"
+name = "lodestone-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

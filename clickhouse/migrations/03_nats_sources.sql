@@ -8,7 +8,7 @@
 --   sdlc.node.upserted   → nats_sdlc_nodes
 --   sdlc.edge.upserted   → nats_sdlc_edges
 
-CREATE TABLE IF NOT EXISTS kg.nats_code_nodes
+CREATE TABLE IF NOT EXISTS lodestone.nats_code_nodes
 (
     id              String,
     kind            String,
@@ -26,10 +26,10 @@ SETTINGS
     nats_url = 'nats:4222',
     nats_subjects = 'code.node.upserted',
     nats_format = 'JSONEachRow',
-    nats_queue_group = 'kg-clickhouse-code-nodes',
+    nats_queue_group = 'lodestone-clickhouse-code-nodes',
     nats_skip_broken_messages = 100;
 
-CREATE TABLE IF NOT EXISTS kg.nats_code_edges
+CREATE TABLE IF NOT EXISTS lodestone.nats_code_edges
 (
     id      String,
     src_id  String,
@@ -44,10 +44,10 @@ SETTINGS
     nats_url = 'nats:4222',
     nats_subjects = 'code.edge.upserted',
     nats_format = 'JSONEachRow',
-    nats_queue_group = 'kg-clickhouse-code-edges',
+    nats_queue_group = 'lodestone-clickhouse-code-edges',
     nats_skip_broken_messages = 100;
 
-CREATE TABLE IF NOT EXISTS kg.nats_sdlc_nodes
+CREATE TABLE IF NOT EXISTS lodestone.nats_sdlc_nodes
 (
     id              String,
     kind            String,
@@ -65,10 +65,10 @@ SETTINGS
     nats_url = 'nats:4222',
     nats_subjects = 'sdlc.node.upserted',
     nats_format = 'JSONEachRow',
-    nats_queue_group = 'kg-clickhouse-sdlc-nodes',
+    nats_queue_group = 'lodestone-clickhouse-sdlc-nodes',
     nats_skip_broken_messages = 100;
 
-CREATE TABLE IF NOT EXISTS kg.nats_sdlc_edges
+CREATE TABLE IF NOT EXISTS lodestone.nats_sdlc_edges
 (
     id      String,
     src_id  String,
@@ -83,5 +83,5 @@ SETTINGS
     nats_url = 'nats:4222',
     nats_subjects = 'sdlc.edge.upserted',
     nats_format = 'JSONEachRow',
-    nats_queue_group = 'kg-clickhouse-sdlc-edges',
+    nats_queue_group = 'lodestone-clickhouse-sdlc-edges',
     nats_skip_broken_messages = 100;

@@ -1,5 +1,5 @@
 [package]
-name = "api"
+name = "lodestone-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-kg-core.workspace = true
+lodestone-core.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,12 +1,12 @@
 //! Reads a JSON fixture of issues + MRs and publishes them to NATS as if
-//! Siphon were streaming SDLC change events into the knowledge graph.
+//! Siphon were streaming SDLC change events into the Lodestone graph.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
-use kg_core::{
+use lodestone_core::{
     ids::{edge_id, node_id},
     subjects::{SDLC_EDGE_SUBJECT, SDLC_NODE_SUBJECT},
     Edge, Node, SdlcEvent,

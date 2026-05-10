@@ -5,7 +5,7 @@
     "title": "Indexer drops files with non-UTF-8 paths",
     "author": "alice",
     "state": "open",
-    "repo": "knowledge-graph",
+    "repo": "lodestone",
     "ts": "2026-05-01T10:00:00Z"
   },
   {
@@ -14,7 +14,7 @@
     "title": "Add support for cross-file call resolution",
     "author": "bob",
     "state": "open",
-    "repo": "knowledge-graph",
+    "repo": "lodestone",
     "ts": "2026-05-02T09:30:00Z"
   },
   {
@@ -23,7 +23,7 @@
     "title": "Make file walk skip non-UTF-8 paths gracefully",
     "author": "alice",
     "state": "merged",
-    "repo": "knowledge-graph",
+    "repo": "lodestone",
     "touches": ["crates/indexer/src/walk.rs", "crates/indexer/src/parse.rs"],
     "closes": ["ISS-1"],
     "ts": "2026-05-05T14:20:00Z"
@@ -34,7 +34,7 @@
     "title": "WIP: scope resolution for call_expression",
     "author": "bob",
     "state": "open",
-    "repo": "knowledge-graph",
+    "repo": "lodestone",
     "touches": ["crates/indexer/src/parse.rs"],
     "closes": [],
     "ts": "2026-05-08T11:05:00Z"

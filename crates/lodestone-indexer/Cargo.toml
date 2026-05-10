@@ -1,5 +1,5 @@
 [package]
-name = "mcp-server"
+name = "lodestone-indexer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,14 +7,17 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-kg-core.workspace = true
+lodestone-core.workspace = true
 tokio.workspace = true
+async-nats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
-rmcp.workspace = true
-schemars.workspace = true
-reqwest.workspace = true
+walkdir.workspace = true
+ignore.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+chrono.workspace = true

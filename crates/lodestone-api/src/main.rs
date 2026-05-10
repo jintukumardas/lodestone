@@ -16,13 +16,13 @@ struct Args {
     #[arg(long, default_value = "http://127.0.0.1:8123", env = "CLICKHOUSE_URL")]
     clickhouse_url: String,
 
-    #[arg(long, default_value = "kg", env = "CLICKHOUSE_DB")]
+    #[arg(long, default_value = "lodestone", env = "CLICKHOUSE_DB")]
     clickhouse_db: String,
 
-    #[arg(long, default_value = "kg", env = "CLICKHOUSE_USER")]
+    #[arg(long, default_value = "lodestone", env = "CLICKHOUSE_USER")]
     clickhouse_user: String,
 
-    #[arg(long, default_value = "kg", env = "CLICKHOUSE_PASSWORD")]
+    #[arg(long, default_value = "lodestone", env = "CLICKHOUSE_PASSWORD")]
     clickhouse_password: String,
 }
 

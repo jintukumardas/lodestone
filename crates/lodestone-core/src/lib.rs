@@ -1,4 +1,4 @@
-//! Shared types and constants for the knowledge graph.
+//! Shared types and constants for Lodestone.
 
 pub mod ids;
 pub mod model;

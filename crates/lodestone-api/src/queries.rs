@@ -43,9 +43,9 @@ const EDGE_COLS: &str = "id, src_id, dst_id, kind, repo, attrs";
 /// Functions whose `calls` edges target the given function id.
 pub async fn callers_of(client: &Client, function_id: &str) -> anyhow::Result<Vec<NodeRow>> {
     let sql = format!(
-        "SELECT {NODE_COLS} FROM kg.nodes FINAL \
+        "SELECT {NODE_COLS} FROM lodestone.nodes FINAL \
          WHERE id IN ( \
-            SELECT src_id FROM kg.edges FINAL WHERE kind = 'calls' AND dst_id = ? \
+            SELECT src_id FROM lodestone.edges FINAL WHERE kind = 'calls' AND dst_id = ? \
          )"
     );
     Ok(client.query(&sql).bind(function_id).fetch_all().await?)
@@ -54,11 +54,11 @@ pub async fn callers_of(client: &Client, function_id: &str) -> anyhow::Result<Ve
 /// Code entities impacted by an MR: walk MR --touches--> file --contains--> *.
 pub async fn impacted_by(client: &Client, mr_id: &str) -> anyhow::Result<Vec<NodeRow>> {
     let sql = format!(
-        "SELECT {NODE_COLS} FROM kg.nodes FINAL \
+        "SELECT {NODE_COLS} FROM lodestone.nodes FINAL \
          WHERE id IN ( \
-            SELECT dst_id FROM kg.edges FINAL \
+            SELECT dst_id FROM lodestone.edges FINAL \
             WHERE kind = 'contains' AND src_id IN ( \
-                SELECT dst_id FROM kg.edges FINAL \
+                SELECT dst_id FROM lodestone.edges FINAL \
                 WHERE kind = 'touches' AND src_id = ? \
             ) \
          )"
@@ -92,7 +92,7 @@ pub async fn subgraph_around(
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT {EDGE_COLS} FROM kg.edges FINAL \
+            "SELECT {EDGE_COLS} FROM lodestone.edges FINAL \
              WHERE src_id IN ({ph}) OR dst_id IN ({ph})",
             ph = placeholders
         );
@@ -127,7 +127,7 @@ pub async fn subgraph_around(
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT {NODE_COLS} FROM kg.nodes FINAL WHERE id IN ({ph})",
+            "SELECT {NODE_COLS} FROM lodestone.nodes FINAL WHERE id IN ({ph})",
             ph = placeholders
         );
         let mut q = client.query(&sql);
@@ -154,7 +154,7 @@ pub async fn find_by_qname(
     qualified_name: &str,
 ) -> anyhow::Result<Option<NodeRow>> {
     let sql = format!(
-        "SELECT {NODE_COLS} FROM kg.nodes FINAL \
+        "SELECT {NODE_COLS} FROM lodestone.nodes FINAL \
          WHERE repo = ? AND qualified_name = ? LIMIT 1"
     );
     let rows: Vec<NodeRow> = client

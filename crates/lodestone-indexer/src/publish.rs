@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use async_nats::Client;
-use kg_core::{
+use lodestone_core::{
     subjects::{CODE_EDGE_SUBJECT, CODE_NODE_SUBJECT},
     Edge, Node,
 };

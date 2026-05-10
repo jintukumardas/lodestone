@@ -2,7 +2,7 @@
 -- The indexer/emitter compute deterministic `id`s, so re-publishing the same
 -- entity yields the same row and the highest `_version` wins.
 
-CREATE TABLE IF NOT EXISTS kg.nodes
+CREATE TABLE IF NOT EXISTS lodestone.nodes
 (
     id              String,
     kind            LowCardinality(String),
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS kg.nodes
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY (repo, kind, id);
 
-CREATE TABLE IF NOT EXISTS kg.edges
+CREATE TABLE IF NOT EXISTS lodestone.edges
 (
     id          String,
     src_id      String,
@@ -34,5 +34,5 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY (repo, kind, id);
 
 -- Helper indices for traversal queries
-ALTER TABLE kg.edges ADD INDEX IF NOT EXISTS edges_src_idx src_id TYPE bloom_filter GRANULARITY 1;
-ALTER TABLE kg.edges ADD INDEX IF NOT EXISTS edges_dst_idx dst_id TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE lodestone.edges ADD INDEX IF NOT EXISTS edges_src_idx src_id TYPE bloom_filter GRANULARITY 1;
+ALTER TABLE lodestone.edges ADD INDEX IF NOT EXISTS edges_dst_idx dst_id TYPE bloom_filter GRANULARITY 1;

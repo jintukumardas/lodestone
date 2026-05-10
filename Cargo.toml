@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/kg-core",
-    "crates/indexer",
-    "crates/sdlc-emitter",
-    "crates/api",
-    "crates/mcp-server",
+    "crates/lodestone-core",
+    "crates/lodestone-indexer",
+    "crates/lodestone-sdlc-emitter",
+    "crates/lodestone-api",
+    "crates/lodestone-mcp-server",
 ]
 
 [workspace.package]
@@ -67,7 +67,7 @@ rmcp = { version = "0.2", features = ["server", "macros", "transport-io"] }
 schemars = "0.8"
 
 # Internal
-kg-core = { path = "crates/kg-core" }
+lodestone-core = { path = "crates/lodestone-core" }
 
 [profile.release]
 opt-level = 3

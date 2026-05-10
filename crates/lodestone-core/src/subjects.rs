@@ -10,5 +10,5 @@ pub const CODE_EDGE_SUBJECT: &str = "code.edge.upserted";
 pub const SDLC_NODE_SUBJECT: &str = "sdlc.node.upserted";
 pub const SDLC_EDGE_SUBJECT: &str = "sdlc.edge.upserted";
 
-pub const STREAM_NAME: &str = "KG";
+pub const STREAM_NAME: &str = "LODESTONE";
 pub const STREAM_SUBJECTS: &[&str] = &["code.>", "sdlc.>"];

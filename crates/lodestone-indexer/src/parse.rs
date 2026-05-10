@@ -15,7 +15,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use kg_core::{
+use lodestone_core::{
     ids::{edge_id, node_id},
     Edge, Node,
 };
