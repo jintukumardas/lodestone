@@ -3,12 +3,13 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use async_nats::jetstream::{self, stream};
 use chrono::Utc;
 use clap::Parser;
 use lodestone_core::{
     ids::{edge_id, node_id},
-    subjects::{SDLC_EDGE_SUBJECT, SDLC_NODE_SUBJECT},
+    subjects::{SDLC_EDGE_SUBJECT, SDLC_NODE_SUBJECT, STREAM_NAME, STREAM_SUBJECTS},
     Edge, Node, SdlcEvent,
 };
 use serde::Deserialize;
@@ -47,6 +48,8 @@ async fn main() -> Result<()> {
     let entries: Vec<FixtureEntry> = serde_json::from_str(&raw)?;
 
     let client = async_nats::connect(&args.nats_url).await?;
+    let js = jetstream::new(client);
+    ensure_stream(&js).await?;
     let mut nodes = 0u64;
     let mut edges = 0u64;
 
@@ -82,7 +85,7 @@ async fn main() -> Result<()> {
                     attrs,
                     ts,
                 };
-                publish_node(&client, &node).await?;
+                publish_node(&js, &node).await?;
                 nodes += 1;
             }
             SdlcEvent::Mr {
@@ -116,7 +119,7 @@ async fn main() -> Result<()> {
                     attrs,
                     ts,
                 };
-                publish_node(&client, &mr_node).await?;
+                publish_node(&js, &mr_node).await?;
                 nodes += 1;
 
                 for closed_issue in closes {
@@ -131,7 +134,7 @@ async fn main() -> Result<()> {
                         attrs: "{}".into(),
                         ts,
                     };
-                    publish_edge(&client, &edge).await?;
+                    publish_edge(&js, &edge).await?;
                     edges += 1;
                 }
 
@@ -147,27 +150,48 @@ async fn main() -> Result<()> {
                         attrs: "{}".into(),
                         ts,
                     };
-                    publish_edge(&client, &edge).await?;
+                    publish_edge(&js, &edge).await?;
                     edges += 1;
                 }
             }
         }
     }
 
-    client.flush().await?;
     let _ = Utc::now();
     tracing::info!(nodes, edges, "sdlc-emitter done");
     Ok(())
 }
 
-async fn publish_node(client: &async_nats::Client, node: &Node) -> Result<()> {
-    let payload = serde_json::to_vec(node)?;
-    client.publish(SDLC_NODE_SUBJECT, payload.into()).await?;
+async fn ensure_stream(js: &jetstream::Context) -> Result<()> {
+    js.get_or_create_stream(stream::Config {
+        name: STREAM_NAME.to_string(),
+        subjects: STREAM_SUBJECTS.iter().map(|s| (*s).to_string()).collect(),
+        storage: stream::StorageType::File,
+        retention: stream::RetentionPolicy::Limits,
+        max_age: std::time::Duration::from_secs(7 * 24 * 3600),
+        ..Default::default()
+    })
+    .await
+    .context("get_or_create_stream LODESTONE")?;
     Ok(())
 }
 
-async fn publish_edge(client: &async_nats::Client, edge: &Edge) -> Result<()> {
+async fn publish_node(js: &jetstream::Context, node: &Node) -> Result<()> {
+    let payload = serde_json::to_vec(node)?;
+    let ack = js
+        .publish(SDLC_NODE_SUBJECT, payload.into())
+        .await
+        .context("jetstream publish failed (sdlc node)")?;
+    ack.await.context("jetstream ack failed (sdlc node)")?;
+    Ok(())
+}
+
+async fn publish_edge(js: &jetstream::Context, edge: &Edge) -> Result<()> {
     let payload = serde_json::to_vec(edge)?;
-    client.publish(SDLC_EDGE_SUBJECT, payload.into()).await?;
+    let ack = js
+        .publish(SDLC_EDGE_SUBJECT, payload.into())
+        .await
+        .context("jetstream publish failed (sdlc edge)")?;
+    ack.await.context("jetstream ack failed (sdlc edge)")?;
     Ok(())
 }

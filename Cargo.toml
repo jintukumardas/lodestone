@@ -6,6 +6,7 @@ members = [
     "crates/lodestone-sdlc-emitter",
     "crates/lodestone-api",
     "crates/lodestone-mcp-server",
+    "crates/lodestone-sink",
 ]
 
 [workspace.package]
@@ -44,6 +45,9 @@ hex = "0.4"
 # Messaging
 async-nats = "0.38"
 
+# Stream utils used by JetStream consumers
+tokio-stream = "0.1"
+
 # ClickHouse
 clickhouse = { version = "0.13", features = ["uuid", "chrono"] }
 
@@ -65,6 +69,9 @@ tree-sitter-rust = "0.23"
 # MCP
 rmcp = { version = "0.2", features = ["server", "macros", "transport-io"] }
 schemars = "0.8"
+
+# Constant-time secret comparison
+subtle = "2"
 
 # Internal
 lodestone-core = { path = "crates/lodestone-core" }

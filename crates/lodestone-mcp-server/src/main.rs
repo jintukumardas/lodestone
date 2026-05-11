@@ -30,6 +30,11 @@ struct Args {
     /// Base URL of the Lodestone graph HTTP API.
     #[arg(long, default_value = "http://127.0.0.1:7700", env = "LODESTONE_API_URL")]
     api_url: String,
+
+    /// Bearer token forwarded to lodestone-api. Must match the API's
+    /// `LODESTONE_API_TOKEN`.
+    #[arg(long, env = "LODESTONE_API_TOKEN", hide_env_values = true)]
+    api_token: String,
 }
 
 #[derive(Clone)]
@@ -71,12 +76,17 @@ fn default_depth() -> u32 {
 
 #[tool_router(router = tool_router)]
 impl KgServer {
-    fn new(api_url: String) -> Self {
-        Self {
+    fn new(api_url: String, api_token: String) -> Result<Self> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let mut auth = reqwest::header::HeaderValue::try_from(format!("Bearer {api_token}"))?;
+        auth.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, auth);
+        let http = reqwest::Client::builder().default_headers(headers).build()?;
+        Ok(Self {
             api_url: Arc::new(api_url),
-            http: reqwest::Client::new(),
+            http,
             tool_router: Self::tool_router(),
-        }
+        })
     }
 
     #[tool(
@@ -179,7 +189,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let server = KgServer::new(args.api_url);
+    let server = KgServer::new(args.api_url, args.api_token)?;
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())

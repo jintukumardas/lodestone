@@ -24,7 +24,7 @@
     "author": "alice",
     "state": "merged",
     "repo": "lodestone",
-    "touches": ["crates/indexer/src/walk.rs", "crates/indexer/src/parse.rs"],
+    "touches": ["crates/lodestone-indexer/src/walk.rs", "crates/lodestone-indexer/src/parse.rs"],
     "closes": ["ISS-1"],
     "ts": "2026-05-05T14:20:00Z"
   },
@@ -35,7 +35,7 @@
     "author": "bob",
     "state": "open",
     "repo": "lodestone",
-    "touches": ["crates/indexer/src/parse.rs"],
+    "touches": ["crates/lodestone-indexer/src/parse.rs"],
     "closes": [],
     "ts": "2026-05-08T11:05:00Z"
   }

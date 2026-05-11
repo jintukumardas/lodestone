@@ -4,26 +4,32 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
+mod auth;
 mod queries;
 mod server;
 
 #[derive(Parser, Debug)]
 #[command(name = "api", about = "Knowledge graph query API")]
 struct Args {
-    #[arg(long, default_value = "0.0.0.0:7700", env = "API_LISTEN")]
+    #[arg(long, default_value = "127.0.0.1:7700", env = "API_LISTEN")]
     listen: SocketAddr,
 
     #[arg(long, default_value = "http://127.0.0.1:8123", env = "CLICKHOUSE_URL")]
     clickhouse_url: String,
 
-    #[arg(long, default_value = "lodestone", env = "CLICKHOUSE_DB")]
+    #[arg(long, env = "CLICKHOUSE_DB")]
     clickhouse_db: String,
 
-    #[arg(long, default_value = "lodestone", env = "CLICKHOUSE_USER")]
+    #[arg(long, env = "CLICKHOUSE_USER")]
     clickhouse_user: String,
 
-    #[arg(long, default_value = "lodestone", env = "CLICKHOUSE_PASSWORD")]
+    /// ClickHouse password. Required; there is no default.
+    #[arg(long, env = "CLICKHOUSE_PASSWORD", hide_env_values = true)]
     clickhouse_password: String,
+
+    /// Bearer token required on every request except /healthz.
+    #[arg(long, env = "LODESTONE_API_TOKEN", hide_env_values = true)]
+    api_token: String,
 }
 
 #[tokio::main]
@@ -43,7 +49,10 @@ async fn main() -> Result<()> {
     let _: u8 = client.query("SELECT 1").fetch_one().await?;
     tracing::info!(url = %args.clickhouse_url, db = %args.clickhouse_db, "connected to ClickHouse");
 
-    let app = server::router(client);
+    if args.api_token.len() < 16 {
+        anyhow::bail!("LODESTONE_API_TOKEN must be at least 16 chars; generate one with `openssl rand -hex 32`");
+    }
+    let app = server::router(client, args.api_token);
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     tracing::info!(addr = %args.listen, "api listening");
     axum::serve(listener, app).await?;

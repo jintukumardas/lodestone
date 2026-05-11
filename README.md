@@ -14,37 +14,49 @@ Inspired by **GitLab's Knowledge Graph** and mirrors the GitLab **Orbit** /
 
 ```
   lodestone-indexer (tree-sitter)  ─┐
-                                    ├─►  NATS  ─►  ClickHouse NATS engine  ─►  MV  ─►  lodestone.nodes
-  lodestone-sdlc-emitter (CLI)     ─┘                                                    lodestone.edges
-                                                                                          │
-                                                                                          ▼
-                                                                          lodestone-api (Axum, iterative BFS)
-                                                                                          │
-                                                                                          ▼
-                                                                          lodestone-mcp-server (rmcp / stdio)
+                                    ├─►  NATS JetStream (stream: LODESTONE)
+  lodestone-sdlc-emitter (CLI)     ─┘                  │
+                                                       ▼
+                                       lodestone-sink (4 durable consumers,
+                                       batch insert with ack-after-write)
+                                                       │
+                                                       ▼
+                                       ClickHouse  (lodestone.nodes / .edges)
+                                                       │
+                                                       ▼
+                                       lodestone-api (Axum, bearer auth, argMax)
+                                                       │
+                                                       ▼
+                                       lodestone-mcp-server (rmcp / stdio)
 ```
 
-- **Subjects:** `code.node.upserted`, `code.edge.upserted`, `sdlc.node.upserted`, `sdlc.edge.upserted`
-- **Storage:** two `ReplacingMergeTree` tables (`lodestone.nodes`, `lodestone.edges`); IDs are
-  blake3-hashed from `(repo, kind, qualified_name)` so re-publishing dedupes.
-- **Materialized views** bridge each NATS source table into the storage tables.
+- **Subjects:** `code.node.upserted`, `code.edge.upserted`, `sdlc.node.upserted`, `sdlc.edge.upserted` — all captured by the `LODESTONE` JetStream stream.
+- **Durability:** publishers wait for JetStream ack; `lodestone-sink` reads via four durable pull consumers (`sink-code-nodes`, `sink-code-edges`, `sink-sdlc-nodes`, `sink-sdlc-edges`) with explicit ack policy. A sink crash replays unacked messages on restart — no data loss.
+- **Storage:** two `ReplacingMergeTree` tables (`lodestone.nodes`, `lodestone.edges`); IDs are blake3-hashed from `(repo, kind, qualified_name)` so re-publishing dedupes.
+- **Read path:** queries collapse duplicate row versions via `argMax(col, _version) GROUP BY id` instead of `SELECT … FINAL`, avoiding the per-query merge.
+- **Cross-file call resolution:** the indexer makes two passes — first collecting every function definition repo-wide, then resolving each call site against that index. Same-file calls win; calls with a single cross-file definition resolve to it; ambiguous calls dangle honestly (`attrs.resolved` records which).
+- **Auth:** `lodestone-api` requires `Authorization: Bearer $LODESTONE_API_TOKEN` on every route except `/healthz`. `lodestone-mcp-server` forwards the same token.
 
 ## Quick start
 
 ```bash
-docker compose up -d                                          # NATS + ClickHouse
+cp .env.example .env             # then edit: real CH password + 32-byte API token
+docker compose up -d             # NATS (JetStream) + ClickHouse
 cargo build --workspace --release
 
+set -a && . ./.env && set +a
+
+./target/release/lodestone-sink &                              # bridge to ClickHouse
 ./target/release/lodestone-indexer --repo . --repo-name lodestone
 ./target/release/lodestone-sdlc-emitter --file fixtures/issues.json --repo lodestone
 
-./target/release/lodestone-api &                              # HTTP API on :7700
-./target/release/lodestone-mcp-server                         # MCP over stdio
+./target/release/lodestone-api &                               # HTTP API on :7700
+./target/release/lodestone-mcp-server                          # MCP over stdio
 ```
 
-> The pipeline uses **core NATS** (not JetStream): messages published before
-> ClickHouse attaches are lost. If `lodestone.nodes` is empty, just re-run the
-> indexer/emitter — they're idempotent.
+> Messages published while `lodestone-sink` is down are retained by JetStream
+> and replayed on restart. `docker compose down -v` is destructive — it drops
+> the NATS data volume too.
 
 ## Using it on your own local git repo
 
@@ -114,9 +126,11 @@ Once data is loaded, useful patterns from the MCP side:
 
 ## HTTP API (port 7700)
 
+Every route except `/healthz` requires `Authorization: Bearer $LODESTONE_API_TOKEN`.
+
 | Endpoint | Description |
 |---|---|
-| `GET /healthz` | liveness |
+| `GET /healthz` | liveness (no auth) |
 | `GET /find?repo=&qname=` | look up a node id by `repo` + qualified name |
 | `GET /callers/{function_id}` | functions that call this one (1-hop reverse on `calls`) |
 | `GET /impacted/{mr_id}` | code entities reachable from `mr --touches--> file --contains--> *` |
@@ -125,9 +139,10 @@ Once data is loaded, useful patterns from the MCP side:
 Example:
 
 ```bash
-ID=$(curl -s "http://127.0.0.1:7700/find?repo=lodestone&qname=lodestone:crates/lodestone-indexer/src/parse.rs:extract" \
+AUTH="Authorization: Bearer $LODESTONE_API_TOKEN"
+ID=$(curl -s -H "$AUTH" "http://127.0.0.1:7700/find?repo=lodestone&qname=lodestone:crates/lodestone-indexer/src/parse.rs:resolve_call_sites" \
      | jq -r .node.id)
-curl -s "http://127.0.0.1:7700/subgraph/$ID?depth=2" | jq '{nodes: (.nodes|length), edges: (.edges|length)}'
+curl -s -H "$AUTH" "http://127.0.0.1:7700/subgraph/$ID?depth=2" | jq '{nodes: (.nodes|length), edges: (.edges|length)}'
 ```
 
 ## MCP tools
@@ -147,7 +162,10 @@ Wire it into Claude Desktop with:
   "mcpServers": {
     "lodestone": {
       "command": "/absolute/path/to/target/release/lodestone-mcp-server",
-      "env": { "LODESTONE_API_URL": "http://127.0.0.1:7700" }
+      "env": {
+        "LODESTONE_API_URL": "http://127.0.0.1:7700",
+        "LODESTONE_API_TOKEN": "<same token as the api>"
+      }
     }
   }
 }
@@ -155,12 +173,13 @@ Wire it into Claude Desktop with:
 
 ## Layout
 
-- `crates/lodestone-core/` — shared `Node`/`Edge` types, NATS subject constants, deterministic ID hashing, ClickHouse-friendly datetime serde
-- `crates/lodestone-indexer/` — `tree-sitter-rust` AST walker; emits `code.node.*` / `code.edge.*` to NATS
-- `crates/lodestone-sdlc-emitter/` — reads a JSON fixture, emits `sdlc.node.*` / `sdlc.edge.*` (file IDs computed with the same hash so cross-source linkage works)
-- `crates/lodestone-api/` — Axum HTTP server querying ClickHouse
-- `crates/lodestone-mcp-server/` — `rmcp` 0.2 stdio server wrapping the HTTP API
-- `clickhouse/migrations/` — `01_database` → `02_storage` → `03_nats_sources` → `04_materialized_views`
+- `crates/lodestone-core/` — shared `Node`/`Edge` types, NATS subject + stream constants, deterministic ID hashing, ClickHouse-friendly datetime serde
+- `crates/lodestone-indexer/` — `tree-sitter-rust` AST walker; two-pass cross-file resolver; publishes `code.node.*` / `code.edge.*` to JetStream
+- `crates/lodestone-sdlc-emitter/` — reads a JSON fixture; publishes `sdlc.node.*` / `sdlc.edge.*` to JetStream
+- `crates/lodestone-sink/` — durable JetStream → ClickHouse bridge; four pull consumers, batch insert, ack-after-write
+- `crates/lodestone-api/` — Axum HTTP server with bearer-token middleware; queries via `argMax`
+- `crates/lodestone-mcp-server/` — `rmcp` 0.2 stdio server wrapping the HTTP API, forwards the bearer token
+- `clickhouse/migrations/` — `01_database` → `02_storage` only; the NATS table engine is no longer used
 - `fixtures/issues.json` — small set of issues + MRs for the demo
 
 ## Captured graph (V1 scope)
@@ -169,17 +188,19 @@ Wire it into Claude Desktop with:
 |---|---|
 | `file`, `function`, `struct`, `enum`, `trait`, `module`, `issue`, `mr` | `contains`, `calls`, `references`, `closes`, `touches` |
 
-V1 deliberately skips a cross-file resolver: `calls` edges target a hash of
-`(repo, "function", "<repo>:fn:<callee_name>")`, so within-file calls usually
-resolve and cross-file calls dangle. That's intentional and surfaces honestly
-in queries (you'll see `calls` edges to non-existent function nodes).
+The two-pass resolver lets cross-file calls land on real `function` nodes
+whenever the bare callee name has a unique definition somewhere in the repo
+(same-file definitions always win). Ambiguous callees (defined in two or more
+other files) still dangle to `<repo>:fn:<callee_name>` and the edge's `attrs`
+includes `"resolved": false` so consumers can tell them apart.
 
 ## Design notes & known limitations
 
 - **rustc 1.86 compatibility:** `time` is pinned via `cargo update -p time --precise 0.3.41 && cargo update -p time-core --precise 0.1.4`.
-- **Datetime format:** ClickHouse JSONEachRow rejects RFC3339's trailing `Z`. `lodestone-core::model::ch_datetime` emits `YYYY-MM-DD HH:MM:SS.fff` instead.
-- **`FINAL` on every read:** acceptable for the demo, expensive at scale; switch to `argMax(...)` aggregations for production.
+- **Datetime serde:** `lodestone-core::model::ch_datetime` emits `YYYY-MM-DD HH:MM:SS.fff` for wire compatibility with the previous JSONEachRow path; the sink converts to `DateTime64(3)` on insert.
 - **Iterative BFS, not recursive CTE:** simpler and version-portable; ClickHouse 24.x recursive CTEs would let `subgraph_around` collapse to a single SQL.
+- **Method calls dangle by design:** `foo.bar()` resolves only to the bare name `bar` with no receiver type. Without a type-aware analyzer this is the correctness ceiling on `calls` resolution.
+- **No incremental re-indexing yet.** Each `lodestone-indexer` run is a full sweep; `notify` is in the dependency tree but not wired up. Fast on small repos (~40 ms for this one) and idempotent thanks to ReplacingMergeTree, so re-running on commit is the current workflow.
 
 ## Contributing
 

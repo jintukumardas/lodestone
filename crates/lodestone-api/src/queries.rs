@@ -1,8 +1,11 @@
 //! ClickHouse query layer.
 //!
-//! `FINAL` is used on every read so ReplacingMergeTree returns the latest
-//! version of each row. For a real-world workload this would be expensive;
-//! the demo uses small data so it's fine.
+//! `ReplacingMergeTree` keeps multiple physical rows per logical key until a
+//! background merge collapses them, so a naive `SELECT *` can return stale
+//! versions. The classic fix — `SELECT … FINAL` — works but materializes the
+//! merge on every query, which is fine for a demo and miserable at scale.
+//! Here we collapse manually with `argMax(col, _version) GROUP BY id`, which
+//! lets ClickHouse scan parts in parallel and skip the merge plan.
 
 use clickhouse::Client;
 use serde::Serialize;
@@ -36,17 +39,40 @@ pub struct Subgraph {
     pub edges: Vec<EdgeRow>,
 }
 
-const NODE_COLS: &str =
-    "id, kind, name, qualified_name, repo, file_path, start_line, end_line, attrs";
-const EDGE_COLS: &str = "id, src_id, dst_id, kind, repo, attrs";
+// Latest-row projections via argMax. The trailing `id` is the grouping key
+// and stays un-aggregated.
+const NODE_LATEST: &str = "SELECT id, \
+    argMax(kind, _version)            AS kind, \
+    argMax(name, _version)            AS name, \
+    argMax(qualified_name, _version)  AS qualified_name, \
+    argMax(repo, _version)            AS repo, \
+    argMax(file_path, _version)       AS file_path, \
+    argMax(start_line, _version)      AS start_line, \
+    argMax(end_line, _version)        AS end_line, \
+    argMax(attrs, _version)           AS attrs \
+    FROM lodestone.nodes";
+
+const EDGE_LATEST: &str = "SELECT id, \
+    argMax(src_id, _version) AS src_id, \
+    argMax(dst_id, _version) AS dst_id, \
+    argMax(kind, _version)   AS kind, \
+    argMax(repo, _version)   AS repo, \
+    argMax(attrs, _version)  AS attrs \
+    FROM lodestone.edges";
 
 /// Functions whose `calls` edges target the given function id.
+///
+/// Edge attribute columns (kind, src_id, dst_id) are stable per id in our
+/// model, so a raw subquery filter is safe and avoids the WHERE-vs-argMax
+/// alias clash that ClickHouse refuses.
 pub async fn callers_of(client: &Client, function_id: &str) -> anyhow::Result<Vec<NodeRow>> {
     let sql = format!(
-        "SELECT {NODE_COLS} FROM lodestone.nodes FINAL \
+        "{NODE_LATEST} \
          WHERE id IN ( \
-            SELECT src_id FROM lodestone.edges FINAL WHERE kind = 'calls' AND dst_id = ? \
-         )"
+            SELECT src_id FROM lodestone.edges \
+            WHERE kind = 'calls' AND dst_id = ? \
+         ) \
+         GROUP BY id"
     );
     Ok(client.query(&sql).bind(function_id).fetch_all().await?)
 }
@@ -54,14 +80,15 @@ pub async fn callers_of(client: &Client, function_id: &str) -> anyhow::Result<Ve
 /// Code entities impacted by an MR: walk MR --touches--> file --contains--> *.
 pub async fn impacted_by(client: &Client, mr_id: &str) -> anyhow::Result<Vec<NodeRow>> {
     let sql = format!(
-        "SELECT {NODE_COLS} FROM lodestone.nodes FINAL \
+        "{NODE_LATEST} \
          WHERE id IN ( \
-            SELECT dst_id FROM lodestone.edges FINAL \
+            SELECT dst_id FROM lodestone.edges \
             WHERE kind = 'contains' AND src_id IN ( \
-                SELECT dst_id FROM lodestone.edges FINAL \
+                SELECT dst_id FROM lodestone.edges \
                 WHERE kind = 'touches' AND src_id = ? \
             ) \
-         )"
+         ) \
+         GROUP BY id"
     );
     Ok(client.query(&sql).bind(mr_id).fetch_all().await?)
 }
@@ -86,14 +113,19 @@ pub async fn subgraph_around(
         if frontier.is_empty() || visited.len() >= max_nodes {
             break;
         }
-        // Collect edges where any endpoint is in the frontier.
         let placeholders = std::iter::repeat("?")
             .take(frontier.len())
             .collect::<Vec<_>>()
             .join(",");
+        // Filter on raw columns via a subquery to avoid the argMax-alias
+        // clash CH otherwise reports as ILLEGAL_AGGREGATION.
         let sql = format!(
-            "SELECT {EDGE_COLS} FROM lodestone.edges FINAL \
-             WHERE src_id IN ({ph}) OR dst_id IN ({ph})",
+            "{EDGE_LATEST} \
+             WHERE id IN ( \
+                SELECT id FROM lodestone.edges \
+                WHERE src_id IN ({ph}) OR dst_id IN ({ph}) \
+             ) \
+             GROUP BY id",
             ph = placeholders
         );
         let mut q = client.query(&sql);
@@ -117,7 +149,6 @@ pub async fn subgraph_around(
         frontier = next_frontier;
     }
 
-    // Now fetch all nodes by id.
     let ids: Vec<String> = visited.into_iter().collect();
     let nodes = if ids.is_empty() {
         Vec::new()
@@ -127,7 +158,7 @@ pub async fn subgraph_around(
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT {NODE_COLS} FROM lodestone.nodes FINAL WHERE id IN ({ph})",
+            "{NODE_LATEST} WHERE id IN ({ph}) GROUP BY id",
             ph = placeholders
         );
         let mut q = client.query(&sql);
@@ -154,8 +185,12 @@ pub async fn find_by_qname(
     qualified_name: &str,
 ) -> anyhow::Result<Option<NodeRow>> {
     let sql = format!(
-        "SELECT {NODE_COLS} FROM lodestone.nodes FINAL \
-         WHERE repo = ? AND qualified_name = ? LIMIT 1"
+        "{NODE_LATEST} \
+         WHERE id IN ( \
+            SELECT id FROM lodestone.nodes WHERE repo = ? AND qualified_name = ? \
+         ) \
+         GROUP BY id \
+         LIMIT 1"
     );
     let rows: Vec<NodeRow> = client
         .query(&sql)

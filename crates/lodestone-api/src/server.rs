@@ -11,23 +11,28 @@ use clickhouse::Client;
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
-use crate::queries;
+use crate::{auth, queries};
 
 #[derive(Clone)]
 pub struct AppState {
     pub ch: Arc<Client>,
 }
 
-pub fn router(client: Client) -> Router {
+pub fn router(client: Client, api_token: String) -> Router {
     let state = AppState {
         ch: Arc::new(client),
     };
+    let token = auth::ApiToken(api_token);
     Router::new()
         .route("/healthz", get(healthz))
         .route("/callers/{function_id}", get(callers))
         .route("/impacted/{mr_id}", get(impacted))
         .route("/subgraph/{node_id}", get(subgraph))
         .route("/find", get(find))
+        .layer(axum::middleware::from_fn_with_state(
+            token,
+            auth::require_bearer,
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -22,9 +22,9 @@ services:
         soft: 262144
         hard: 262144
     environment:
-      CLICKHOUSE_DB: lodestone
-      CLICKHOUSE_USER: lodestone
-      CLICKHOUSE_PASSWORD: lodestone
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:?CLICKHOUSE_DB must be set in .env}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in .env}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
       - "8123:8123"   # HTTP

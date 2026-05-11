@@ -1,32 +1,104 @@
 //! Tree-sitter walk that extracts a small set of node and edge kinds from a
 //! single Rust source file.
 //!
-//! Scope cap (V1):
-//! - Nodes: `file`, `function`, `struct`, `enum`, `trait`, `module`
-//! - Edges: `contains` (file → item), `calls` (function → callee by name within file)
+//! Two-pass design:
+//!   1. `extract_defs` walks each file and emits definition nodes (`file`,
+//!      `function`, `struct`, `enum`, `trait`, `module`), `contains` edges,
+//!      and a list of unresolved `CallSite`s (one per call expression inside
+//!      every function body).
+//!   2. After every file has been visited the caller builds a [`DefIndex`]
+//!      from the accumulated function nodes and feeds it back through
+//!      [`resolve_call_sites`], which produces real `calls` edges that target
+//!      the actual function-node IDs whenever resolution is possible.
 //!
-//! No cross-file resolution. The `dst_id` of a `calls` edge is hashed from the
-//! callee's bare name within the same `repo`, so multiple call sites referring
-//! to the same name collapse onto the same target — which may or may not
-//! exist as a `function` node. That's intentional: dangling edges are fine for
-//! the demo and surface honestly in queries.
+//! Resolution policy is intentionally simple:
+//!   * if the callee name is defined in the same file, prefer that definition;
+//!   * else if it is defined in exactly one other file across the repo, target
+//!     that definition;
+//!   * else fall back to the legacy `<repo>:fn:<name>` hash so the edge
+//!     dangles honestly (ambiguous or external call).
+//!
+//! This is enough to make in-repo cross-file calls resolve while still being
+//! truthful when the name is ambiguous.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use lodestone_core::{
     ids::{edge_id, node_id},
     Edge, Node,
 };
 use tree_sitter::{Node as TsNode, Parser, Tree};
 
-pub struct Extracted {
+/// Definitions and unresolved call sites extracted from one file.
+pub struct FileDefs {
     pub nodes: Vec<Node>,
-    pub edges: Vec<Edge>,
+    pub contains_edges: Vec<Edge>,
+    pub call_sites: Vec<CallSite>,
 }
 
-pub fn extract(repo: &str, rel_path: &Path, source: &str) -> Result<Extracted> {
+/// A single call expression we haven't yet resolved to a target node.
+#[derive(Debug, Clone)]
+pub struct CallSite {
+    pub src_fn_id: String,
+    pub src_file_path: String,
+    pub callee_name: String,
+    pub ts: DateTime<Utc>,
+}
+
+/// Index of every function definition in the repo, keyed by bare name.
+#[derive(Debug, Default)]
+pub struct DefIndex {
+    by_name: HashMap<String, Vec<DefEntry>>,
+}
+
+#[derive(Debug, Clone)]
+struct DefEntry {
+    file_path: String,
+    fn_id: String,
+}
+
+impl DefIndex {
+    /// Build the index from the function nodes collected during pass 1.
+    pub fn build(nodes: &[Node]) -> Self {
+        let mut by_name: HashMap<String, Vec<DefEntry>> = HashMap::new();
+        for n in nodes {
+            if n.kind == "function" {
+                by_name.entry(n.name.clone()).or_default().push(DefEntry {
+                    file_path: n.file_path.clone(),
+                    fn_id: n.id.clone(),
+                });
+            }
+        }
+        Self { by_name }
+    }
+
+    /// Resolve a callee name from a given source file.
+    ///
+    /// Returns `Some((target_id, resolved))` — `resolved == true` when the
+    /// edge points to a real function node, `false` when it falls back to the
+    /// legacy bare-name hash.
+    pub fn resolve(&self, repo: &str, src_file: &str, callee: &str) -> (String, bool) {
+        if let Some(defs) = self.by_name.get(callee) {
+            // Same-file definition wins outright.
+            if let Some(same) = defs.iter().find(|d| d.file_path == src_file) {
+                return (same.fn_id.clone(), true);
+            }
+            // Exactly one cross-file definition: resolve to it.
+            if defs.len() == 1 {
+                return (defs[0].fn_id.clone(), true);
+            }
+            // Ambiguous (multiple cross-file defs, none in this file): dangle.
+        }
+        let qname = format!("{repo}:fn:{callee}");
+        (node_id(repo, "function", &qname), false)
+    }
+}
+
+/// First pass: extract definitions and gather call sites without resolving.
+pub fn extract_defs(repo: &str, rel_path: &Path, source: &str) -> Result<FileDefs> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -60,7 +132,8 @@ pub fn extract(repo: &str, rel_path: &Path, source: &str) -> Result<Extracted> {
     };
 
     let mut nodes = vec![file_node];
-    let mut edges = Vec::new();
+    let mut contains_edges = Vec::new();
+    let mut call_sites = Vec::new();
 
     let root = tree.root_node();
     walk(
@@ -70,11 +143,44 @@ pub fn extract(repo: &str, rel_path: &Path, source: &str) -> Result<Extracted> {
         &rel_str,
         &file_id,
         &mut nodes,
-        &mut edges,
+        &mut contains_edges,
+        &mut call_sites,
         now,
     );
 
-    Ok(Extracted { nodes, edges })
+    Ok(FileDefs {
+        nodes,
+        contains_edges,
+        call_sites,
+    })
+}
+
+/// Second pass: turn each [`CallSite`] into a `calls` edge using [`DefIndex`].
+///
+/// Returns `(edges, resolved_count)`.
+pub fn resolve_call_sites(repo: &str, index: &DefIndex, sites: &[CallSite]) -> (Vec<Edge>, u64) {
+    let mut edges = Vec::with_capacity(sites.len());
+    let mut resolved = 0u64;
+    for s in sites {
+        let (target_id, ok) = index.resolve(repo, &s.src_file_path, &s.callee_name);
+        if ok {
+            resolved += 1;
+        }
+        edges.push(Edge {
+            id: edge_id(&s.src_fn_id, &target_id, "calls"),
+            src_id: s.src_fn_id.clone(),
+            dst_id: target_id,
+            kind: "calls".into(),
+            repo: repo.into(),
+            attrs: format!(
+                r#"{{"callee_name":"{}","resolved":{}}}"#,
+                escape_json(&s.callee_name),
+                ok
+            ),
+            ts: s.ts,
+        });
+    }
+    (edges, resolved)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -85,7 +191,8 @@ fn walk(
     rel_path: &str,
     file_id: &str,
     nodes: &mut Vec<Node>,
-    edges: &mut Vec<Edge>,
+    contains_edges: &mut Vec<Edge>,
+    call_sites: &mut Vec<CallSite>,
     now: chrono::DateTime<Utc>,
 ) {
     match n.kind() {
@@ -105,7 +212,7 @@ fn walk(
                     attrs: "{}".into(),
                     ts: now,
                 });
-                edges.push(Edge {
+                contains_edges.push(Edge {
                     id: edge_id(file_id, &id, "contains"),
                     src_id: file_id.into(),
                     dst_id: id.clone(),
@@ -115,12 +222,9 @@ fn walk(
                     ts: now,
                 });
 
-                // Walk the function body specifically to collect call_expressions
-                // attributed to this function as the source.
                 if let Some(body) = n.child_by_field_name("body") {
-                    collect_calls(body, src, repo, &id, edges, now);
+                    collect_calls(body, src, rel_path, &id, call_sites, now);
                 }
-                // Don't recurse further into the function via the generic walker.
                 return;
             }
         }
@@ -147,7 +251,7 @@ fn walk(
                     attrs: "{}".into(),
                     ts: now,
                 });
-                edges.push(Edge {
+                contains_edges.push(Edge {
                     id: edge_id(file_id, &id, "contains"),
                     src_id: file_id.into(),
                     dst_id: id.clone(),
@@ -163,32 +267,35 @@ fn walk(
 
     let mut cursor = n.walk();
     for child in n.children(&mut cursor) {
-        walk(child, src, repo, rel_path, file_id, nodes, edges, now);
+        walk(
+            child,
+            src,
+            repo,
+            rel_path,
+            file_id,
+            nodes,
+            contains_edges,
+            call_sites,
+            now,
+        );
     }
 }
 
 fn collect_calls(
     n: TsNode<'_>,
     src: &[u8],
-    repo: &str,
+    rel_path: &str,
     src_function_id: &str,
-    edges: &mut Vec<Edge>,
+    call_sites: &mut Vec<CallSite>,
     now: chrono::DateTime<Utc>,
 ) {
     if n.kind() == "call_expression" {
         if let Some(fn_node) = n.child_by_field_name("function") {
             if let Some(name) = callee_name(fn_node, src) {
-                // Target qname is just `<repo>:fn:<name>` — stable across call
-                // sites referring to the same bare callee. May dangle.
-                let target_qname = format!("{repo}:fn:{name}");
-                let target_id = node_id(repo, "function", &target_qname);
-                edges.push(Edge {
-                    id: edge_id(src_function_id, &target_id, "calls"),
-                    src_id: src_function_id.into(),
-                    dst_id: target_id,
-                    kind: "calls".into(),
-                    repo: repo.into(),
-                    attrs: format!(r#"{{"callee_name":"{}"}}"#, escape_json(&name)),
+                call_sites.push(CallSite {
+                    src_fn_id: src_function_id.into(),
+                    src_file_path: rel_path.into(),
+                    callee_name: name,
                     ts: now,
                 });
             }
@@ -196,7 +303,7 @@ fn collect_calls(
     }
     let mut cursor = n.walk();
     for child in n.children(&mut cursor) {
-        collect_calls(child, src, repo, src_function_id, edges, now);
+        collect_calls(child, src, rel_path, src_function_id, call_sites, now);
     }
 }
 
@@ -234,18 +341,19 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn extracts_function_and_call() {
+    fn extracts_function_and_call_sites() {
         let src = r#"
 fn greet() { hello(); }
 fn hello() {}
 "#;
-        let out = extract("r", Path::new("a.rs"), src).unwrap();
+        let out = extract_defs("r", Path::new("a.rs"), src).unwrap();
         let kinds: Vec<&str> = out.nodes.iter().map(|n| n.kind.as_str()).collect();
         assert!(kinds.contains(&"file"));
         assert_eq!(kinds.iter().filter(|k| **k == "function").count(), 2);
-        assert!(out.edges.iter().any(|e| e.kind == "calls"));
+        assert_eq!(out.call_sites.len(), 1);
+        assert_eq!(out.call_sites[0].callee_name, "hello");
         assert_eq!(
-            out.edges.iter().filter(|e| e.kind == "contains").count(),
+            out.contains_edges.iter().filter(|e| e.kind == "contains").count(),
             2
         );
     }
@@ -256,9 +364,57 @@ fn hello() {}
 struct Foo;
 trait Bar {}
 "#;
-        let out = extract("r", Path::new("a.rs"), src).unwrap();
+        let out = extract_defs("r", Path::new("a.rs"), src).unwrap();
         let kinds: Vec<String> = out.nodes.iter().map(|n| n.kind.clone()).collect();
         assert!(kinds.iter().any(|k| k == "struct"));
         assert!(kinds.iter().any(|k| k == "trait"));
+    }
+
+    #[test]
+    fn resolves_same_file_call() {
+        let src = r#"
+fn greet() { hello(); }
+fn hello() {}
+"#;
+        let a = extract_defs("r", Path::new("a.rs"), src).unwrap();
+        let idx = DefIndex::build(&a.nodes);
+        let (edges, resolved) = resolve_call_sites("r", &idx, &a.call_sites);
+        assert_eq!(resolved, 1);
+        let hello_id = node_id("r", "function", "r:a.rs:hello");
+        assert_eq!(edges[0].dst_id, hello_id);
+        assert!(edges[0].attrs.contains("\"resolved\":true"));
+    }
+
+    #[test]
+    fn resolves_unique_cross_file_call() {
+        let a = extract_defs("r", Path::new("a.rs"), "fn caller() { target(); }").unwrap();
+        let b = extract_defs("r", Path::new("b.rs"), "fn target() {}").unwrap();
+
+        let mut all = a.nodes.clone();
+        all.extend(b.nodes.clone());
+        let idx = DefIndex::build(&all);
+
+        let (edges, resolved) = resolve_call_sites("r", &idx, &a.call_sites);
+        assert_eq!(resolved, 1);
+        let target_id = node_id("r", "function", "r:b.rs:target");
+        assert_eq!(edges[0].dst_id, target_id);
+    }
+
+    #[test]
+    fn ambiguous_call_dangles() {
+        let a = extract_defs("r", Path::new("a.rs"), "fn caller() { dup(); }").unwrap();
+        let b = extract_defs("r", Path::new("b.rs"), "fn dup() {}").unwrap();
+        let c = extract_defs("r", Path::new("c.rs"), "fn dup() {}").unwrap();
+
+        let mut all = a.nodes.clone();
+        all.extend(b.nodes.clone());
+        all.extend(c.nodes.clone());
+        let idx = DefIndex::build(&all);
+
+        let (edges, resolved) = resolve_call_sites("r", &idx, &a.call_sites);
+        assert_eq!(resolved, 0);
+        let dangle = node_id("r", "function", "r:fn:dup");
+        assert_eq!(edges[0].dst_id, dangle);
+        assert!(edges[0].attrs.contains("\"resolved\":false"));
     }
 }
