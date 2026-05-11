@@ -6,4 +6,4 @@ Cargo.lock.bak
 .idea/
 .vscode/
 *.log
-*.md
+PROGRESS.md
