@@ -152,7 +152,7 @@ impl ServerHandler for KgServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Knowledge graph for a local Rust monorepo. Index code via the `indexer` \
+                "Lodestone: a local knowledge graph for a Rust monorepo. Index code via the `lodestone-indexer` \
                  binary, then use these tools to explore call graphs and SDLC impact. \
                  Node IDs are stable hashes; resolve them via `find` (HTTP) or by name."
                     .into(),
